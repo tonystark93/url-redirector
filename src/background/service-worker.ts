@@ -54,6 +54,37 @@ function buildRegexWithExclusion(sourceRegex: string, dest: string): string {
 }
 
 /**
+ * When a regex source ends with a path wildcard (e.g. /*, /.*)
+ * and the destination has no explicit back-references, automatically
+ * rewrite into a capture-group form so the URL path is preserved.
+ *
+ * Example:
+ *   source="http://abc/*"  dest="http://abc.g.b.com/"
+ *   → regexFilter="http://abc/(.*)"
+ *   → regexSubstitution="http://abc.g.b.com/\1"
+ *   Result: http://abc/b/c/d → http://abc.g.b.com/b/c/d
+ */
+function autoAddPathCapture(
+    sourceRegex: string,
+    dest: string,
+): { regexFilter: string; regexSubstitution: string } | null {
+    // Respect explicit user back-references (\0-\9)
+    if (/\\[0-9]/.test(dest)) return null;
+
+    // Match trailing path wildcards: /* /+ /.* /.+ /(.*) /(.+)
+    const m = sourceRegex.match(/^([\s\S]*?)(\/?\*\+?|\/(\.[*+]|\(\.[*+]\)))$/);
+    if (!m) return null;
+
+    const base = m[1]; // prefix before the wildcard
+    const destBase = dest.endsWith('/') ? dest : dest + '/';
+
+    return {
+        regexFilter: base + '/(.*)',
+        regexSubstitution: destBase + '\\1',
+    };
+}
+
+/**
  * Detect graph-based redirect cycles (A→B→C→A).
  */
 function detectCycles(rules: RedirectRule[]): Set<string> {
@@ -102,24 +133,53 @@ function convertRulesToDNR(rules: RedirectRule[]): chrome.declarativeNetRequest.
         const ruleId = i + 1; // DNR IDs must be >= 1
 
         if (rule.matchType === 'regex') {
-            // User provides their own regex — check if dest also matches it (would cause a loop)
-            const hasRegexOverlap = destinationMatchesRegex(rule.sourceUrl, rule.destinationUrl);
-            const regexFilter = hasRegexOverlap
-                ? buildRegexWithExclusion(rule.sourceUrl, rule.destinationUrl)
-                : rule.sourceUrl;
+            // Try to auto-detect path-preserving intent (e.g. http://abc/* → http://abc.g.b.com/)
+            const pathCapture = autoAddPathCapture(rule.sourceUrl, rule.destinationUrl);
 
-            dnrRules.push({
-                id: ruleId,
-                priority: 1,
-                action: {
-                    type: 'redirect' as chrome.declarativeNetRequest.RuleActionType,
-                    redirect: { url: rule.destinationUrl },
-                },
-                condition: {
-                    regexFilter,
-                    resourceTypes: ALL_RESOURCE_TYPES,
-                },
-            });
+            if (pathCapture) {
+                // Path-preserving mode: use regexSubstitution so /b/c/d is kept
+                // Cycle check: does dest match the NEW capture-group regex?
+                const hasOverlap = destinationMatchesRegex(pathCapture.regexFilter, rule.destinationUrl);
+                const regexFilter = hasOverlap
+                    ? buildRegexWithExclusion(pathCapture.regexFilter, rule.destinationUrl)
+                    : pathCapture.regexFilter;
+
+                dnrRules.push({
+                    id: ruleId,
+                    priority: 1,
+                    action: {
+                        type: 'redirect' as chrome.declarativeNetRequest.RuleActionType,
+                        redirect: { regexSubstitution: pathCapture.regexSubstitution },
+                    },
+                    condition: {
+                        regexFilter,
+                        resourceTypes: ALL_RESOURCE_TYPES,
+                    },
+                });
+            } else {
+                // Plain regex redirect (user may include \1 back-refs themselves)
+                const hasRegexOverlap = destinationMatchesRegex(rule.sourceUrl, rule.destinationUrl);
+                const regexFilter = hasRegexOverlap
+                    ? buildRegexWithExclusion(rule.sourceUrl, rule.destinationUrl)
+                    : rule.sourceUrl;
+
+                const redirectAction = /\\[0-9]/.test(rule.destinationUrl)
+                    ? { regexSubstitution: rule.destinationUrl }
+                    : { url: rule.destinationUrl };
+
+                dnrRules.push({
+                    id: ruleId,
+                    priority: 1,
+                    action: {
+                        type: 'redirect' as chrome.declarativeNetRequest.RuleActionType,
+                        redirect: redirectAction,
+                    },
+                    condition: {
+                        regexFilter,
+                        resourceTypes: ALL_RESOURCE_TYPES,
+                    },
+                });
+            }
         } else {
             // "contains" match type
             const hasOverlap = isSubstringOverlap(rule.sourceUrl, rule.destinationUrl);
