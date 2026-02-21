@@ -9,9 +9,9 @@ export default function OptionsApp() {
   const [rules, setRules] = useState<RedirectRule[]>([]);
   const [globalEnabled, setGlobalEnabled] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingRule, setEditingRule] = useState<RedirectRule | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newRule, setNewRule] = useState({ sourceUrl: '', destinationUrl: '', matchType: 'contains' as const, enabled: true });
+  const [newRule, setNewRule] = useState<{ sourceUrl: string; destinationUrl: string; matchType: 'contains' | 'regex'; enabled: boolean }>({ sourceUrl: '', destinationUrl: '', matchType: 'contains', enabled: true });
 
   useEffect(() => {
     chrome.storage.sync.get({ rules: [], globalEnabled: true }, (data: { [key: string]: any }) => {
@@ -226,11 +226,10 @@ export default function OptionsApp() {
                   <button
                     key={type}
                     onClick={() => setNewRule({ ...newRule, matchType: type })}
-                    className={`px-3 py-1 rounded-md text-s font-medium transition-colors ${
-                      newRule.matchType === type
-                        ? 'bg-indigo-50 text-indigo-600 border border-indigo-200'
-                        : 'bg-white text-slate-400 border border-slate-200 hover:text-slate-600'
-                    }`}
+                    className={`px-3 py-1 rounded-md text-s font-medium transition-colors ${newRule.matchType === type
+                      ? 'bg-indigo-50 text-indigo-600 border border-indigo-200'
+                      : 'bg-white text-slate-400 border border-slate-200 hover:text-slate-600'
+                      }`}
                   >
                     {type === 'regex' ? '.*' : '⊃'} {type}
                   </button>
@@ -282,9 +281,8 @@ export default function OptionsApp() {
                 {filteredRules.map((rule) => (
                   <tr
                     key={rule.id}
-                    className={`border-b border-slate-50 last:border-0 group hover:bg-slate-50/50 transition-colors ${
-                      !rule.enabled || !globalEnabled ? 'opacity-50' : ''
-                    }`}
+                    className={`border-b border-slate-50 last:border-0 group hover:bg-slate-50/50 transition-colors ${!rule.enabled || !globalEnabled ? 'opacity-50' : ''
+                      }`}
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -298,17 +296,20 @@ export default function OptionsApp() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      {editingId === rule.id ? (
+                      {editingRule?.id === rule.id ? (
                         <input
                           type="text"
-                          defaultValue={rule.sourceUrl}
-                          onBlur={(e) => handleUpdate({ ...rule, sourceUrl: e.target.value })}
-                          onKeyDown={(e) => e.key === 'Enter' && handleUpdate({ ...rule, sourceUrl: (e.target as HTMLInputElement).value })}
+                          value={editingRule.sourceUrl}
+                          onChange={(e) => setEditingRule({ ...editingRule, sourceUrl: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleUpdate(editingRule);
+                            if (e.key === 'Escape') setEditingRule(null);
+                          }}
                           className="w-full px-2 py-1 border border-indigo-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
                           autoFocus
                         />
                       ) : (
-                        <span className="font-mono text-slate-700 cursor-pointer hover:text-indigo-600" onClick={() => setEditingId(rule.id)}>
+                        <span className="font-mono text-slate-700 cursor-pointer hover:text-indigo-600" onClick={() => setEditingRule({ ...rule })}>
                           {rule.sourceUrl}
                         </span>
                       )}
@@ -319,33 +320,49 @@ export default function OptionsApp() {
                       </svg>
                     </td>
                     <td className="px-4 py-3">
-                      {editingId === rule.id ? (
-                        <input
-                          type="text"
-                          defaultValue={rule.destinationUrl}
-                          onBlur={(e) => handleUpdate({ ...rule, destinationUrl: e.target.value })}
-                          onKeyDown={(e) => e.key === 'Enter' && handleUpdate({ ...rule, destinationUrl: (e.target as HTMLInputElement).value })}
-                          className="w-full px-2 py-1 border border-indigo-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
-                        />
+                      {editingRule?.id === rule.id ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={editingRule.destinationUrl}
+                            onChange={(e) => setEditingRule({ ...editingRule, destinationUrl: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleUpdate(editingRule);
+                              if (e.key === 'Escape') setEditingRule(null);
+                            }}
+                            className="w-full px-2 py-1 border border-indigo-300 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+                          />
+                          <button
+                            onClick={() => handleUpdate(editingRule)}
+                            className="shrink-0 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded transition-colors"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setEditingRule(null)}
+                            className="shrink-0 px-2 py-1 text-slate-500 hover:text-slate-700 text-xs transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       ) : (
-                        <span className="font-mono text-indigo-600 cursor-pointer hover:text-indigo-700" onClick={() => setEditingId(rule.id)}>
+                        <span className="font-mono text-indigo-600 cursor-pointer hover:text-indigo-700" onClick={() => setEditingRule({ ...rule })}>
                           {rule.destinationUrl}
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-s font-medium ${
-                        rule.matchType === 'regex'
-                          ? 'bg-violet-50 text-violet-600 border border-violet-200'
-                          : 'bg-slate-50 text-slate-500 border border-slate-200'
-                      }`}>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-s font-medium ${rule.matchType === 'regex'
+                        ? 'bg-violet-50 text-violet-600 border border-violet-200'
+                        : 'bg-slate-50 text-slate-500 border border-slate-200'
+                        }`}>
                         {rule.matchType}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          onClick={() => setEditingId(editingId === rule.id ? null : rule.id)}
+                          onClick={() => setEditingRule(editingRule?.id === rule.id ? null : { ...rule })}
                           className="p-1.5 rounded text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
                           title="Edit"
                         >

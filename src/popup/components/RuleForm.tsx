@@ -3,12 +3,13 @@ import { RedirectRule } from '../../types';
 
 interface RuleFormProps {
   rule: RedirectRule | null;
+  defaultSourceUrl?: string;
   onSubmit: (rule: any) => void;
   onCancel: () => void;
 }
 
-export default function RuleForm({ rule, onSubmit, onCancel }: RuleFormProps) {
-  const [sourceUrl, setSourceUrl] = useState('');
+export default function RuleForm({ rule, defaultSourceUrl = '', onSubmit, onCancel }: RuleFormProps) {
+  const [sourceUrl, setSourceUrl] = useState(defaultSourceUrl);
   const [destinationUrl, setDestinationUrl] = useState('');
   const [matchType, setMatchType] = useState<'contains' | 'regex'>('contains');
   const [enabled, setEnabled] = useState(true);
@@ -114,21 +115,19 @@ export default function RuleForm({ rule, onSubmit, onCancel }: RuleFormProps) {
       <div className="flex items-center gap-1.5">
         <button
           onClick={() => setMatchType('contains')}
-          className={`px-2.5 py-1 rounded-md text-s font-medium transition-colors ${
-            matchType === 'contains'
+          className={`px-2.5 py-1 rounded-md text-s font-medium transition-colors ${matchType === 'contains'
               ? 'bg-indigo-50 text-indigo-600 border border-indigo-200'
               : 'bg-white text-slate-400 border border-slate-200 hover:text-slate-600'
-          }`}
+            }`}
         >
           Contains
         </button>
         <button
           onClick={() => setMatchType('regex')}
-          className={`px-2.5 py-1 rounded-md text-s font-medium transition-colors ${
-            matchType === 'regex'
+          className={`px-2.5 py-1 rounded-md text-s font-medium transition-colors ${matchType === 'regex'
               ? 'bg-indigo-50 text-indigo-600 border border-indigo-200'
               : 'bg-white text-slate-400 border border-slate-200 hover:text-slate-600'
-          }`}
+            }`}
         >
           Regex
         </button>

@@ -5,7 +5,8 @@
     "version": "1.0.0",
     "permissions": [
         "declarativeNetRequest",
-        "storage"
+        "storage",
+        "activeTab"
     ],
     "host_permissions": [
         "<all_urls>"

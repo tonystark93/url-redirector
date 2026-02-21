@@ -32,23 +32,25 @@ function isSubstringOverlap(source: string, dest: string): boolean {
 }
 
 /**
- * Build a regex that matches the source URL but excludes the destination.
- * For source="http://hello" dest="http://hello.google.com",
- * we create: ^http://hello(?!\.google\.com)
+ * Checks if the destination URL itself matches the source regex pattern.
+ * If so, the redirect would fire again on the destination — a recursive loop.
  */
-function buildExclusionRegex(source: string, dest: string): string {
-    const normalizedSource = source.replace(/\/+$/, '');
-    const normalizedDest = dest.replace(/\/+$/, '');
-
-    // Find the part of the dest that extends beyond the source
-    const suffix = normalizedDest.slice(normalizedSource.length);
-
-    if (suffix) {
-        // Build regex: match source but NOT when followed by the destination suffix
-        return escapeRegex(normalizedSource) + '(?!' + escapeRegex(suffix) + ')';
+function destinationMatchesRegex(sourceRegex: string, dest: string): boolean {
+    try {
+        return new RegExp(sourceRegex).test(dest);
+    } catch {
+        return false;
     }
+}
 
-    return escapeRegex(normalizedSource);
+/**
+ * Wraps a regex pattern to exclude a specific destination URL using a negative lookahead.
+ * e.g., pattern="http://abc/*" dest="http://abc.g.b.com/"
+ * → "(?!http:\/\/abc\.g\.b\.com\/)http://abc/*"
+ * This prevents the rule from firing when the URL is already the destination.
+ */
+function buildRegexWithExclusion(sourceRegex: string, dest: string): string {
+    return '(?!' + escapeRegex(dest) + ')' + sourceRegex;
 }
 
 /**
@@ -100,16 +102,21 @@ function convertRulesToDNR(rules: RedirectRule[]): chrome.declarativeNetRequest.
         const ruleId = i + 1; // DNR IDs must be >= 1
 
         if (rule.matchType === 'regex') {
-            // User provides their own regex
+            // User provides their own regex — check if dest also matches it (would cause a loop)
+            const hasRegexOverlap = destinationMatchesRegex(rule.sourceUrl, rule.destinationUrl);
+            const regexFilter = hasRegexOverlap
+                ? buildRegexWithExclusion(rule.sourceUrl, rule.destinationUrl)
+                : rule.sourceUrl;
+
             dnrRules.push({
                 id: ruleId,
                 priority: 1,
                 action: {
                     type: 'redirect' as chrome.declarativeNetRequest.RuleActionType,
-                    redirect: { regexSubstitution: rule.destinationUrl },
+                    redirect: { url: rule.destinationUrl },
                 },
                 condition: {
-                    regexFilter: rule.sourceUrl,
+                    regexFilter,
                     resourceTypes: ALL_RESOURCE_TYPES,
                 },
             });
@@ -119,7 +126,14 @@ function convertRulesToDNR(rules: RedirectRule[]): chrome.declarativeNetRequest.
 
             if (hasOverlap) {
                 // Use regex with negative lookahead to prevent recursive matching
-                const regexFilter = buildExclusionRegex(rule.sourceUrl, rule.destinationUrl);
+                // e.g., source="http://hello/" dest="http://hello.google.com/"
+                // → matches http://hello/ but NOT when already http://hello.google.com/
+                const normalizedSource = rule.sourceUrl.replace(/\/+$/, '');
+                const normalizedDest = rule.destinationUrl.replace(/\/+$/, '');
+                const suffix = normalizedDest.slice(normalizedSource.length);
+                const regexFilter = suffix
+                    ? escapeRegex(normalizedSource) + '(?!' + escapeRegex(suffix) + ')'
+                    : escapeRegex(normalizedSource);
 
                 dnrRules.push({
                     id: ruleId,
