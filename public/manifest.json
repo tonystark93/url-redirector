@@ -2,11 +2,12 @@
     "manifest_version": 3,
     "name": "URL Redirect",
     "description": "Redirect URLs including JS, CSS, AJAX calls, and iframes based on custom rules",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "permissions": [
         "declarativeNetRequest",
         "storage",
-        "activeTab"
+        "activeTab",
+        "webNavigation"
     ],
     "host_permissions": [
         "<all_urls>"

@@ -208,7 +208,8 @@ function convertRulesToDNR(rules: RedirectRule[]): chrome.declarativeNetRequest.
                     },
                 });
             } else {
-                // Simple URL filter — no overlap risk
+                // Use regexFilter for reliable substring matching
+                // (urlFilter has special pattern rules that can cause mismatches)
                 dnrRules.push({
                     id: ruleId,
                     priority: 1,
@@ -217,7 +218,7 @@ function convertRulesToDNR(rules: RedirectRule[]): chrome.declarativeNetRequest.
                         redirect: { url: rule.destinationUrl },
                     },
                     condition: {
-                        urlFilter: rule.sourceUrl,
+                        regexFilter: escapeRegex(rule.sourceUrl),
                         resourceTypes: ALL_RESOURCE_TYPES,
                     },
                 });
@@ -261,6 +262,34 @@ async function syncRules() {
         console.error('[URL Redirect] Failed to sync rules:', error);
     }
 }
+
+/**
+ * Fallback: apply "contains" redirect rules via webNavigation for navigations
+ * that are served from a site's own service worker (bypassing declarativeNetRequest).
+ */
+function findContainsRedirect(url: string, rules: RedirectRule[], globalEnabled: boolean): string | null {
+    if (!globalEnabled) return null;
+    for (const rule of rules) {
+        if (!rule.enabled || rule.matchType !== 'contains') continue;
+        if (url.includes(rule.sourceUrl) && url !== rule.destinationUrl) {
+            return rule.destinationUrl;
+        }
+    }
+    return null;
+}
+
+chrome.webNavigation.onCompleted.addListener((details) => {
+    // Only handle main frame navigations
+    if (details.frameId !== 0) return;
+
+    chrome.storage.sync.get({ rules: [], globalEnabled: true }, (data) => {
+        const { rules, globalEnabled } = data as StorageData;
+        const redirect = findContainsRedirect(details.url, rules, globalEnabled);
+        if (redirect) {
+            chrome.tabs.update(details.tabId, { url: redirect });
+        }
+    });
+});
 
 // Listen for storage changes
 chrome.storage.onChanged.addListener((changes, area) => {
