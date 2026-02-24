@@ -210,6 +210,8 @@ function convertRulesToDNR(rules: RedirectRule[]): chrome.declarativeNetRequest.
             } else {
                 // Use regexFilter for reliable substring matching
                 // (urlFilter has special pattern rules that can cause mismatches)
+                // Use regexFilter for reliable substring matching
+                // (urlFilter has special pattern rules that can cause mismatches)
                 dnrRules.push({
                     id: ruleId,
                     priority: 1,
@@ -218,6 +220,7 @@ function convertRulesToDNR(rules: RedirectRule[]): chrome.declarativeNetRequest.
                         redirect: { url: rule.destinationUrl },
                     },
                     condition: {
+                        regexFilter: escapeRegex(rule.sourceUrl),
                         regexFilter: escapeRegex(rule.sourceUrl),
                         resourceTypes: ALL_RESOURCE_TYPES,
                     },
@@ -264,15 +267,38 @@ async function syncRules() {
 }
 
 /**
- * Fallback: apply "contains" redirect rules via webNavigation for navigations
- * that are served from a site's own service worker (bypassing declarativeNetRequest).
+ * Fallback: apply redirect rules via webNavigation for navigations served from a
+ * site's own service worker (which bypass declarativeNetRequest).
+ * Handles both "contains" and "regex" match types.
  */
-function findContainsRedirect(url: string, rules: RedirectRule[], globalEnabled: boolean): string | null {
+function findNavigationRedirect(
+    url: string,
+    rules: RedirectRule[],
+    globalEnabled: boolean,
+): string | null {
     if (!globalEnabled) return null;
+    const cycledIds = detectCycles(rules);
+
     for (const rule of rules) {
-        if (!rule.enabled || rule.matchType !== 'contains') continue;
-        if (url.includes(rule.sourceUrl) && url !== rule.destinationUrl) {
-            return rule.destinationUrl;
+        if (!rule.enabled || cycledIds.has(rule.id)) continue;
+
+        if (rule.matchType === 'contains') {
+            if (url.includes(rule.sourceUrl) && url !== rule.destinationUrl) {
+                return rule.destinationUrl;
+            }
+        } else if (rule.matchType === 'regex') {
+            try {
+                const regex = new RegExp(rule.sourceUrl);
+                if (regex.test(url) && url !== rule.destinationUrl) {
+                    // Support \1 back-references in the destination
+                    if (/\\[0-9]/.test(rule.destinationUrl)) {
+                        return url.replace(regex, rule.destinationUrl.replace(/\\([0-9])/g, '$$$1'));
+                    }
+                    return rule.destinationUrl;
+                }
+            } catch {
+                // Invalid regex — skip
+            }
         }
     }
     return null;
@@ -284,7 +310,7 @@ chrome.webNavigation.onCompleted.addListener((details) => {
 
     chrome.storage.sync.get({ rules: [], globalEnabled: true }, (data) => {
         const { rules, globalEnabled } = data as StorageData;
-        const redirect = findContainsRedirect(details.url, rules, globalEnabled);
+        const redirect = findNavigationRedirect(details.url, rules, globalEnabled);
         if (redirect) {
             chrome.tabs.update(details.tabId, { url: redirect });
         }
