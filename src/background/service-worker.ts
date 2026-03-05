@@ -58,11 +58,15 @@ function buildRegexWithExclusion(sourceRegex: string, dest: string): string {
  * and the destination has no explicit back-references, automatically
  * rewrite into a capture-group form so the URL path is preserved.
  *
- * Example:
+ * Examples:
+ *   source="a.b.com/*"  dest="n.m.com/*"
+ *   → regexFilter="a.b.com/(.*)"
+ *   → regexSubstitution="n.m.com/\1"
+ *   Result: a.b.com/b/d.html → n.m.com/b/d.html
+ *
  *   source="http://abc/*"  dest="http://abc.g.b.com/"
  *   → regexFilter="http://abc/(.*)"
  *   → regexSubstitution="http://abc.g.b.com/\1"
- *   Result: http://abc/b/c/d → http://abc.g.b.com/b/c/d
  */
 function autoAddPathCapture(
     sourceRegex: string,
@@ -71,12 +75,15 @@ function autoAddPathCapture(
     // Respect explicit user back-references (\0-\9)
     if (/\\[0-9]/.test(dest)) return null;
 
-    // Match trailing path wildcards: /* /+ /.* /.+ /(.*) /(.+)
+    // Match trailing path wildcards in source: /* /+ /.* /.+ /(.*) /(.+)
     const m = sourceRegex.match(/^([\s\S]*?)(\/?\*\+?|\/(\.[*+]|\(\.[*+]\)))$/);
     if (!m) return null;
 
     const base = m[1]; // prefix before the wildcard
-    const destBase = dest.endsWith('/') ? dest : dest + '/';
+
+    // Strip trailing wildcard from destination too (e.g. n.m.com/* → n.m.com/)
+    const destStripped = dest.replace(/\/?\*$/, '');
+    const destBase = destStripped.endsWith('/') ? destStripped : destStripped + '/';
 
     return {
         regexFilter: base + '/(.*)',
@@ -221,7 +228,6 @@ function convertRulesToDNR(rules: RedirectRule[]): chrome.declarativeNetRequest.
                     },
                     condition: {
                         regexFilter: escapeRegex(rule.sourceUrl),
-                        regexFilter: escapeRegex(rule.sourceUrl),
                         resourceTypes: ALL_RESOURCE_TYPES,
                     },
                 });
@@ -288,13 +294,24 @@ function findNavigationRedirect(
             }
         } else if (rule.matchType === 'regex') {
             try {
-                const regex = new RegExp(rule.sourceUrl);
-                if (regex.test(url) && url !== rule.destinationUrl) {
-                    // Support \1 back-references in the destination
-                    if (/\\[0-9]/.test(rule.destinationUrl)) {
-                        return url.replace(regex, rule.destinationUrl.replace(/\\([0-9])/g, '$$$1'));
+                // Mirror the DNR path: try path-capture first (handles a.b.com/* → n.m.com/*)
+                const pathCapture = autoAddPathCapture(rule.sourceUrl, rule.destinationUrl);
+                if (pathCapture) {
+                    const regex = new RegExp(pathCapture.regexFilter);
+                    if (regex.test(url)) {
+                        const sub = pathCapture.regexSubstitution.replace(/\\([0-9])/g, '$$$1');
+                        const result = url.replace(regex, sub);
+                        if (result !== url) return result;
                     }
-                    return rule.destinationUrl;
+                } else {
+                    const regex = new RegExp(rule.sourceUrl);
+                    if (regex.test(url) && url !== rule.destinationUrl) {
+                        // Support \1 back-references in the destination
+                        if (/\\[0-9]/.test(rule.destinationUrl)) {
+                            return url.replace(regex, rule.destinationUrl.replace(/\\([0-9])/g, '$$$1'));
+                        }
+                        return rule.destinationUrl;
+                    }
                 }
             } catch {
                 // Invalid regex — skip
